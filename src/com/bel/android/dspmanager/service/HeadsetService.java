@@ -151,7 +151,6 @@ public class HeadsetService extends Service {
 	 * Receive new broadcast intents for adding DSP to session
 	 */
     private final BroadcastReceiver mAudioSessionReceiver = new BroadcastReceiver() {
-
 		@Override
 		public void onReceive(Context context, Intent intent) {
 			String action = intent.getAction();
@@ -243,160 +242,136 @@ public class HeadsetService extends Service {
         }
     };
 
-    @Override
-    public void onCreate() {
-        super.onCreate();
-        Log.i(TAG, "Starting service.");
+	@Override
+	public void onCreate() {
+		super.onCreate();
+		Log.i(TAG, "Starting service.");
 
-        IntentFilter audioFilter = new IntentFilter();
-        audioFilter.addAction(AudioEffect.ACTION_OPEN_AUDIO_EFFECT_CONTROL_SESSION);
-        audioFilter.addAction(AudioEffect.ACTION_CLOSE_AUDIO_EFFECT_CONTROL_SESSION);
-        registerReceiver(mAudioSessionReceiver, audioFilter);
+		IntentFilter audioFilter = new IntentFilter();
+		audioFilter.addAction(AudioEffect.ACTION_OPEN_AUDIO_EFFECT_CONTROL_SESSION);
+		audioFilter.addAction(AudioEffect.ACTION_CLOSE_AUDIO_EFFECT_CONTROL_SESSION);
+		registerReceiver(mAudioSessionReceiver, audioFilter);
 
-        final IntentFilter intentFilter = new IntentFilter(Intent.ACTION_HEADSET_PLUG);
-        intentFilter.addAction(BluetoothA2dp.ACTION_CONNECTION_STATE_CHANGED);
-        intentFilter.addAction(Intent.ACTION_ANALOG_AUDIO_DOCK_PLUG);
-        intentFilter.addAction(Intent.ACTION_DIGITAL_AUDIO_DOCK_PLUG);
-        intentFilter.addAction(AudioManager.ACTION_AUDIO_BECOMING_NOISY);
-        registerReceiver(mRoutingReceiver, intentFilter);
+		final IntentFilter intentFilter = new IntentFilter(Intent.ACTION_HEADSET_PLUG);
+		intentFilter.addAction(BluetoothDevice.ACTION_ACL_CONNECTED);
+		intentFilter.addAction(BluetoothDevice.ACTION_ACL_DISCONNECTED);
+		intentFilter.addAction(Intent.ACTION_ANALOG_AUDIO_DOCK_PLUG);
+		intentFilter.addAction(AudioManager.ACTION_AUDIO_BECOMING_NOISY);
+		registerReceiver(mRoutingReceiver, intentFilter);
 
-        registerReceiver(mPreferenceUpdateReceiver,
-                new IntentFilter(DSPManager.ACTION_UPDATE_PREFERENCES));
-    }
-
-    @Override
-    public void onDestroy() {
-        super.onDestroy();
-        Log.i(TAG, "Stopping service.");
-
-        unregisterReceiver(mAudioSessionReceiver);
-        unregisterReceiver(mRoutingReceiver);
-        unregisterReceiver(mPreferenceUpdateReceiver);
-    }
-
-    @Override
-    public IBinder onBind(Intent intent) {
-        return mBinder;
-    }
-
-    /**
-     * Gain temporary control over the global equalizer.
-     * Used by DSPManager when testing a new equalizer setting.
-     *
-     * @param levels
-     */
-    public void setEqualizerLevels(float[] levels) {
-        mOverriddenEqualizerLevels = levels;
-        updateDsp();
-    }
-
-    /**
-     * There appears to be no way to find out what the current actual audio routing is.
-     * For instance, if a wired headset is plugged in, the following objects/classes are involved:
-     * </p>
-     * <ol>
-     * <li>wiredaccessoryobserver</li>
-     * <li>audioservice</li>
-     * <li>audiosystem</li>
-     * <li>audiopolicyservice</li>
-     * <li>audiopolicymanager</li>
-     * </ol>
-     * <p>Once the decision of new routing has been made by the policy manager, it is relayed to
-     * audiopolicyservice, which waits for some time to let application buffers drain, and then
-     * informs it to hardware. The full chain is:</p>
-     * <ol>
-     * <li>audiopolicymanager</li>
-     * <li>audiopolicyservice</li>
-     * <li>audiosystem</li>
-     * <li>audioflinger</li>
-     * <li>audioeffect (if any)</li>
-     * </ol>
-     * <p>However, the decision does not appear to be relayed to java layer, so we must
-     * make a guess about what the audio output routing is.</p>
-     *
-     * @return string token that identifies configuration to use
-     */
-    public String getAudioOutputRouting() {
-        if (mUseHeadset) {
-            return "headset";
-        }
-        if (mUseBluetooth) {
-            return "bluetooth";
-        }
-        if (mUseUSB) {
-            return "usb";
-        }
-        return "speaker";
-    }
-
-    /**
-     * Push new configuration to audio stack.
-     */
-    protected synchronized void updateDsp() {
-        final String mode = getAudioOutputRouting();
-        SharedPreferences preferences = getSharedPreferences(
-                DSPManager.SHARED_PREFERENCES_BASENAME + "." + mode, 0);
-
-        Log.i(TAG, "Selected configuration: " + mode);
-
-        for (Integer sessionId : mAudioSessions.keySet()) {
-            updateDsp(preferences, mAudioSessions.get(sessionId));
-        }
-    }
-
-    private void updateDsp(SharedPreferences prefs, EffectSet session) {
-        try {
-            session.mCompression.setEnabled(prefs.getBoolean("dsp.compression.enable", false));
-            session.mCompression.setParameter(session.mCompression.intToByteArray(0),
-                    session.mCompression.shortToByteArray(
-                            Short.valueOf(prefs.getString("dsp.compression.mode", "0"))));
-        } catch (Exception e) {
-            Log.e(TAG, "Error enabling compression!", e);
-        }
-
-        try {
-            session.mBassBoost.setEnabled(prefs.getBoolean("dsp.bass.enable", false));
-            session.mBassBoost.setStrength(Short.valueOf(prefs.getString("dsp.bass.mode", "0")));
-	    session.mBassBoost.setCenterFrequency(Short.valueOf(preferences.getString("dsp.bass.freq", "55")));
-        } catch (Exception e) {
-            Log.e(TAG, "Error enabling bass boost!", e);
-        }
-
-        try {
-            session.mEqualizer.setEnabled(prefs.getBoolean("dsp.tone.enable", false));
-            float[] equalizerLevels;
-            if (mOverriddenEqualizerLevels != null) {
-                equalizerLevels = mOverriddenEqualizerLevels;
-            } else {
-                /* Equalizer state is in a single string preference with all values separated by ; */
-                String[] levels = prefs.getString("dsp.tone.eq.custom", "0;0;0;0;0").split(";");
-                equalizerLevels = new float[levels.length];
-                for (int i = 0; i < levels.length; i++) {
-                    equalizerLevels[i] = Float.valueOf(levels[i]);
-                }
-            }
-
-            for (short i = 0; i < equalizerLevels.length; i ++) {
-                session.mEqualizer.setBandLevel(i, (short) Math.round(equalizerLevels[i] * 100));
-            }
-            session.mEqualizer.setParameter(session.mEqualizer.intToByteArray(1000),
-                    session.mEqualizer.shortToByteArray(
-                            Short.valueOf(prefs.getString("dsp.tone.loudness", "10000"))));
-        } catch (Exception e) {
-            Log.e(TAG, "Error enabling equalizer!", e);
-        }
-
-        try {
-            session.mVirtualizer.setEnabled(prefs.getBoolean("dsp.headphone.enable", false));
-            session.mVirtualizer.setStrength(
-                    Short.valueOf(prefs.getString("dsp.headphone.mode", "0")));
-        } catch (Exception e) {
-            Log.e(TAG, "Error enabling virtualizer!", e);
+		registerReceiver(mPreferenceUpdateReceiver,
+				new IntentFilter(DSPManager.ACTION_UPDATE_PREFERENCES));
 	}
-            session.mStereoWide.setEnabled(preferences.getBoolean("dsp.stereowide.enable", false));
-	    session.mStereoWide.setStrength(Short.valueOf(preferences.getString("dsp.stereowide.mode", "0")));
-       } catch (Exception e) {
-            Log.e(TAG, "Error enabling stereo wide!", e);
-        }
-    }
+
+	@Override
+	public void onDestroy() {
+		super.onDestroy();
+		Log.i(TAG, "Stopping service.");
+
+		unregisterReceiver(mAudioSessionReceiver);
+		unregisterReceiver(mRoutingReceiver);
+		unregisterReceiver(mPreferenceUpdateReceiver);
+	}
+
+	@Override
+	public IBinder onBind(Intent intent) {
+		return mBinder;
+	}
+
+	/**
+	 * Gain temporary control over the global equalizer.
+	 * Used by DSPManager when testing a new equalizer setting.
+	 *
+	 * @param levels
+	 */
+	public void setEqualizerLevels(float[] levels) {
+		mOverriddenEqualizerLevels = levels;
+		updateDsp();
+	}
+
+	/**
+	 * There appears to be no way to find out what the current actual audio routing is.
+	 * For instance, if a wired headset is plugged in, the following objects/classes are involved:</p>
+	 * <ol>
+	 * <li>wiredaccessoryobserver</li>
+	 * <li>audioservice</li>
+	 * <li>audiosystem</li>
+	 * <li>audiopolicyservice</li>
+	 * <li>audiopolicymanager</li>
+	 * </ol>
+	 * <p>Once the decision of new routing has been made by the policy manager, it is relayed to
+	 * audiopolicyservice, which waits for some time to let application buffers drain, and then
+	 * informs it to hardware. The full chain is:</p>
+	 * <ol>
+	 * <li>audiopolicymanager</li>
+	 * <li>audiopolicyservice</li>
+	 * <li>audiosystem</li>
+	 * <li>audioflinger</li>
+	 * <li>audioeffect (if any)</li>
+	 * </ol>
+	 * <p>However, the decision does not appear to be relayed to java layer, so we must
+	 * make a guess about what the audio output routing is.</p>
+	 *
+	 * @return string token that identifies configuration to use
+	 */
+	public String getAudioOutputRouting() {
+		if (mUseBluetooth) {
+			return "bluetooth";
+		}
+		if (mUseHeadset) {
+			return "headset";
+		}
+		if (mUseUSB) {
+		    return "usb";
+		}
+		return "speaker";
+	}
+
+	/**
+	 * Push new configuration to audio stack.
+	 */
+	protected void updateDsp() {
+		final String mode = getAudioOutputRouting();
+		SharedPreferences preferences = getSharedPreferences(DSPManager.SHARED_PREFERENCES_BASENAME + "." + mode, 0);
+		Log.i(TAG, "Selected configuration: " + mode);
+
+		for (Integer sessionId : new ArrayList<Integer>(mAudioSessions.keySet())) {
+			try {
+				updateDsp(preferences, mAudioSessions.get(sessionId));
+			}
+			catch (Exception e) {
+				Log.w(TAG, String.format("Trouble trying to manage session %d, removing...", sessionId), e);
+				mAudioSessions.remove(sessionId);
+			}
+		}
+	}
+
+	private void updateDsp(SharedPreferences preferences, EffectSet session) {
+		session.mCompression.setEnabled(preferences.getBoolean("dsp.compression.enable", false));
+		EffectSet.setParameter(session.mCompression, 0, Short.valueOf(preferences.getString("dsp.compression.mode", "0")));
+
+		session.mBassBoost.setEnabled(preferences.getBoolean("dsp.bass.enable", false));
+		session.mBassBoost.setStrength(Short.valueOf(preferences.getString("dsp.bass.mode", "0")));
+		session.mBassBoost.setCenterFrequency(Short.valueOf(preferences.getString("dsp.bass.freq", "55")));
+
+		/* Equalizer state is in a single string preference with all values separated by ; */
+		session.mEqualizer.setEnabled(preferences.getBoolean("dsp.tone.enable", false));
+		if (mOverriddenEqualizerLevels != null) {
+			for (short i = 0; i < mOverriddenEqualizerLevels.length; i ++) {
+				session.mEqualizer.setBandLevel(i, (short) Math.round(Float.valueOf(mOverriddenEqualizerLevels[i]) * 100));
+			}
+		} else {
+			String[] levels = preferences.getString("dsp.tone.eq.custom", "0;0;0;0;0").split(";");
+			for (short i = 0; i < levels.length; i ++) {
+				session.mEqualizer.setBandLevel(i, (short) Math.round(Float.valueOf(levels[i]) * 100));
+			}
+		}
+		EffectSet.setParameter(session.mEqualizer, 1000, Short.valueOf(preferences.getString("dsp.tone.loudness", "10000")));
+
+		session.mVirtualizer.setEnabled(preferences.getBoolean("dsp.headphone.enable", false));
+		session.mVirtualizer.setStrength(Short.valueOf(preferences.getString("dsp.headphone.mode", "0")));
+
+		session.mStereoWide.setEnabled(preferences.getBoolean("dsp.stereowide.enable", false));
+		session.mStereoWide.setStrength(Short.valueOf(preferences.getString("dsp.stereowide.mode", "0")));
+	}
 }
